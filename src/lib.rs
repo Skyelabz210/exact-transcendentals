@@ -26,6 +26,7 @@
 extern crate alloc;
 
 #[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 #[allow(unused_imports)]
@@ -37,6 +38,13 @@ pub mod agm;
 pub mod binary_splitting;
 pub mod continued_fraction;
 pub mod constants;
+
+#[cfg(feature = "arbitrary-precision")]
+pub mod bigint;
+#[cfg(feature = "arbitrary-precision")]
+pub mod crt;
+#[cfg(feature = "arbitrary-precision")]
+pub mod crt_rational;
 
 /// Scale factors for fixed-point representation
 pub mod scales {

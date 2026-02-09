@@ -11,7 +11,8 @@ A Rust library (`no_std`-compatible) providing exact integer-only implementation
 ```bash
 cargo build                    # Debug build
 cargo build --release          # Optimized build (LTO enabled)
-cargo test                     # Run all 102 tests
+cargo test                     # Run all 102 tests (base)
+cargo test --features arbitrary-precision  # Run all 137 tests (with CRTBigInt)
 cargo test -- --nocapture      # With println! output visible
 cargo test cordic              # Tests for a specific module
 cargo test test_sincos_zero    # Run a single test by name
@@ -36,8 +37,9 @@ A **git pre-commit hook** automatically runs the quality gate when `src/` or `Ca
 | Debug build | `cargo build` succeeds |
 | Release build | `cargo build --release` succeeds (LTO) |
 | no_std build | `cargo build --no-default-features` succeeds |
-| Tests (debug) | `cargo test` — all 102 tests pass |
+| Tests (debug) | `cargo test` — all 102 base tests pass |
 | Tests (release) | `cargo test --release` — identical results under optimization |
+| Tests (arb-prec) | `cargo test --features arbitrary-precision` — 137 tests (base + CRT) |
 
 ## Architecture
 
@@ -53,6 +55,11 @@ All values are represented as **scaled integers**: a real value `v` is stored as
 | `binary_splitting` | exp, sin, cos, atan, pi (Machin + Chudnovsky), ln2, e | Recursive divide-and-conquer series evaluation | Configurable |
 | `continued_fraction` | CF for sqrt(n)/e/pi/phi/ln2, convergents, Pell equation solver, generalized tan CF | Continued fraction expansion | Exact rational |
 | `constants` | Precomputed pi/e/phi/sqrt2/ln2/etc at 30-bit and 62-bit precision, rational approximations, CORDIC angle tables, Pade coefficients | Lookup tables | `2^30` / `2^62` |
+| `bigint`* | `HCVLangBigInt` — arbitrary-precision signed integers (base 2^64 limbs) | Schoolbook mul, binary GCD | Unlimited |
+| `crt`* | `CRTBigInt` — Chinese Remainder Theorem bounded integers (10 Fibonacci-prime moduli) | CRT + Garner reconstruction | ±2^126 |
+| `crt_rational`* | `CRTRational` — exact rational with arbitrary-precision num/den | BigInt GCD reduction | Unlimited |
+
+*Modules marked with `*` require `--features arbitrary-precision`.
 
 ### Key Design Patterns
 
@@ -65,7 +72,7 @@ All values are represented as **scaled integers**: a real value `v` is stored as
 
 - `std` (default) — standard library support
 - `simd` — SIMD optimizations for CORDIC (stub)
-- `arbitrary-precision` — CRTBigInt integration (stub)
+- `arbitrary-precision` — CRTBigInt + HCVLangBigInt + CRTRational + big binary splitting
 
 ## Integer-Only Mandate
 
