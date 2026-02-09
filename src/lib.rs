@@ -165,6 +165,30 @@ impl ExactRational {
         }.reduce()
     }
     
+    /// Checked addition: returns `None` on i128 overflow.
+    pub fn checked_add(&self, other: &Self) -> Option<Self> {
+        let cross1 = self.num.checked_mul(other.den)?;
+        let cross2 = other.num.checked_mul(self.den)?;
+        let num = cross1.checked_add(cross2)?;
+        let den = self.den.checked_mul(other.den)?;
+        Some(Self { num, den }.reduce())
+    }
+
+    /// Checked multiplication: returns `None` on i128 overflow.
+    pub fn checked_mul(&self, other: &Self) -> Option<Self> {
+        let num = self.num.checked_mul(other.num)?;
+        let den = self.den.checked_mul(other.den)?;
+        Some(Self { num, den }.reduce())
+    }
+
+    /// Checked division: returns `None` on division by zero or i128 overflow.
+    pub fn checked_div(&self, other: &Self) -> Option<Self> {
+        if other.num == 0 { return None; }
+        let num = self.num.checked_mul(other.den)?;
+        let den = self.den.checked_mul(other.num)?;
+        Some(Self { num, den }.reduce())
+    }
+
     /// Convert to scaled integer (for fixed-point operations)
     pub fn to_scaled(&self, scale: i128) -> i128 {
         (self.num * scale) / self.den
@@ -454,6 +478,75 @@ mod remediation_tests {
         // May be 0 due to overflow in binary_split, or a non-zero approximation
         // Either way, it should not panic
         let _ = result;
+    }
+
+    // ── ExactRational checked arithmetic ──
+    #[test]
+    fn test_exact_rational_checked_add_ok() {
+        let a = ExactRational::new(1, 3);
+        let b = ExactRational::new(1, 6);
+        let result = a.checked_add(&b);
+        assert!(result.is_some());
+        let sum = result.unwrap();
+        assert_eq!(sum.num, 1);
+        assert_eq!(sum.den, 2);
+    }
+
+    #[test]
+    fn test_exact_rational_checked_add_overflow() {
+        // Need denominators > 1 to trigger cross-multiplication overflow.
+        // (MAX/2) * (MAX/3) overflows i128.
+        let a = ExactRational::new(i128::MAX / 2, i128::MAX / 3);
+        let b = ExactRational::new(i128::MAX / 2, i128::MAX / 3);
+        let result = a.checked_add(&b);
+        assert!(result.is_none(), "checked_add should return None on overflow");
+    }
+
+    #[test]
+    fn test_exact_rational_checked_mul_ok() {
+        let a = ExactRational::new(2, 3);
+        let b = ExactRational::new(3, 5);
+        let result = a.checked_mul(&b);
+        assert!(result.is_some());
+        let prod = result.unwrap();
+        assert_eq!(prod.num, 2);
+        assert_eq!(prod.den, 5);
+    }
+
+    #[test]
+    fn test_exact_rational_checked_mul_overflow() {
+        let a = ExactRational::new(i128::MAX, 1);
+        let b = ExactRational::new(2, 1);
+        let result = a.checked_mul(&b);
+        assert!(result.is_none(), "checked_mul should return None on overflow");
+    }
+
+    #[test]
+    fn test_exact_rational_checked_div_ok() {
+        let a = ExactRational::new(2, 3);
+        let b = ExactRational::new(4, 5);
+        let result = a.checked_div(&b);
+        assert!(result.is_some());
+        let quot = result.unwrap();
+        assert_eq!(quot.num, 5);
+        assert_eq!(quot.den, 6);
+    }
+
+    #[test]
+    fn test_exact_rational_checked_div_by_zero() {
+        let a = ExactRational::new(1, 1);
+        let zero = ExactRational::new(0, 1);
+        let result = a.checked_div(&zero);
+        assert!(result.is_none(), "checked_div by zero should return None");
+    }
+
+    #[test]
+    fn test_exact_rational_checked_div_overflow() {
+        let a = ExactRational::new(i128::MAX, 1);
+        let b = ExactRational::new(1, i128::MAX);
+        let result = a.checked_div(&b);
+        // a.num * b.den = MAX * MAX → overflow
+        assert!(result.is_none(), "checked_div should return None on overflow");
     }
 }
 

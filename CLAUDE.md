@@ -11,8 +11,8 @@ A Rust library (`no_std`-compatible) providing exact integer-only implementation
 ```bash
 cargo build                    # Debug build
 cargo build --release          # Optimized build (LTO enabled)
-cargo test                     # Run all 124 tests (base)
-cargo test --features arbitrary-precision  # Run all 160 tests (with CRTBigInt)
+cargo test                     # Run all 143 tests (base)
+cargo test --features arbitrary-precision  # Run all 179 tests (with CRTBigInt)
 cargo test -- --nocapture      # With println! output visible
 cargo test cordic              # Tests for a specific module
 cargo test test_sincos_zero    # Run a single test by name
@@ -37,9 +37,9 @@ A **git pre-commit hook** automatically runs the quality gate when `src/` or `Ca
 | Debug build | `cargo build` succeeds |
 | Release build | `cargo build --release` succeeds (LTO) |
 | no_std build | `cargo build --no-default-features` succeeds |
-| Tests (debug) | `cargo test` — all 124 base tests pass |
+| Tests (debug) | `cargo test` — all 143 base tests pass |
 | Tests (release) | `cargo test --release` — identical results under optimization |
-| Tests (arb-prec) | `cargo test --features arbitrary-precision` — 160 tests (base + CRT) |
+| Tests (arb-prec) | `cargo test --features arbitrary-precision` — 179 tests (base + CRT) |
 
 ## Architecture
 
@@ -66,6 +66,7 @@ All values are represented as **scaled integers**: a real value `v` is stored as
 - **Two CORDIC engines**: `CordicEngine` (circular: trig) and `HyperbolicCordic` (hyperbolic: exp/ln). Hyperbolic mode repeats iterations at indices 4, 13, 40, ... (the 3k+1 sequence) for convergence.
 - **Binary splitting** uses a `BinarySplitState { p, q, b, t }` tuple that combines recursively — the generic `binary_split()` function accepts closures for `a(k)`, `b(k)`, `p(k)`, `q(k)`.
 - **Overflow protection**: `binary_split()` returns `Option` (None on overflow). AGM uses `checked_mul` with fallback paths. `checked_mul_i128`/`checked_add_i128` helpers return `TranscendentalError`.
+- **Checked API**: `tan_checked()`, `ln_checked()`, `exp_checked()` return `TransResult<T>` instead of sentinel values (`i64::MAX`, `i64::MIN`, `u128::MAX`). `ExactRational` has `checked_add`, `checked_mul`, `checked_div` returning `Option`. Legacy sentinel-based methods are retained for backward compatibility.
 - **`#[cfg(test)]` float usage**: `to_f64()` and `from_scaled()` helpers exist only behind `#[cfg(test)]` for verification against `std::f64::consts`. This is the only place floats appear.
 
 ### Feature Flags

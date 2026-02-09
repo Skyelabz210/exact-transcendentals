@@ -241,12 +241,28 @@ impl CordicEngine {
     }
     
     /// Compute tangent: tan(angle) = sin/cos
-    /// Uses K-Elimination style exact division
+    /// Uses K-Elimination style exact division.
+    /// Returns `i64::MAX` sentinel when cos ≈ 0. Prefer `tan_checked` for proper error handling.
     #[inline]
     pub fn tan(&self, angle: i64) -> i64 {
         let (cos_val, sin_val) = self.sincos(angle);
         if cos_val == 0 { return i64::MAX; }
         (sin_val as i128 * SCALE as i128 / cos_val as i128) as i64
+    }
+
+    /// Checked tangent: returns `DomainError` when |cos(angle)| is too small for
+    /// meaningful division (angle near π/2 + nπ). The threshold is 1 ULP at the
+    /// current CORDIC precision — below this, the quotient overflows i64.
+    #[inline]
+    pub fn tan_checked(&self, angle: i64) -> crate::TransResult<i64> {
+        let (cos_val, sin_val) = self.sincos(angle);
+        // When |cos| < threshold, tan would overflow the i64 range.
+        // Threshold: |sin/cos| must fit in i64, so |cos| > |sin| / i64::MAX * SCALE.
+        // Simplified: reject when |cos| < 2 (≈ 2^(-29) in real units).
+        if cos_val.abs() < 2 {
+            return Err(crate::TranscendentalError::DomainError("tan: cos(angle) ≈ 0, tangent undefined"));
+        }
+        Ok((sin_val as i128 * SCALE as i128 / cos_val as i128) as i64)
     }
     
     /// Compute arctangent (vectoring mode)
@@ -548,6 +564,14 @@ impl HyperbolicCordic {
         2 * z
     }
     
+    /// Checked natural log: returns `DomainError` for x ≤ 0 instead of sentinel.
+    pub fn ln_checked(&self, x: i64) -> crate::TransResult<i64> {
+        if x <= 0 {
+            return Err(crate::TranscendentalError::DomainError("ln: argument must be positive"));
+        }
+        Ok(self.ln(x))
+    }
+
     /// Compute square root using hyperbolic CORDIC.
     ///
     /// **WARNING**: This implementation has limited precision due to the
@@ -813,5 +837,62 @@ mod tests {
         let hyp = HyperbolicCordic::default();
         let result = hyp.ln(-42);
         assert_eq!(result, i64::MIN, "ln(negative) should return i64::MIN sentinel");
+    }
+
+    // ================================================================
+    // TDD: Result-based checked API
+    // ================================================================
+
+    #[test]
+    fn test_tan_checked_normal() {
+        let engine = CordicEngine::default();
+        // HALF_PI is pi/2 in scaled form, so HALF_PI/2 = pi/4
+        let result = engine.tan_checked(HALF_PI / 2);
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        // tan(pi/4) = 1.0; allow CORDIC precision tolerance
+        assert!((from_scaled(val) - 1.0).abs() < 0.001,
+            "tan(pi/4) = {}, expected ~1.0", from_scaled(val));
+    }
+
+    #[test]
+    fn test_tan_checked_at_pi_over_2() {
+        let engine = CordicEngine::default();
+        let result = engine.tan_checked(HALF_PI); // tan(pi/2) → DomainError
+        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::TranscendentalError::DomainError(_))));
+    }
+
+    #[test]
+    fn test_ln_checked_positive() {
+        let hyp = HyperbolicCordic::default();
+        let result = hyp.ln_checked(SCALE); // ln(1) = 0
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_ln_checked_zero() {
+        let hyp = HyperbolicCordic::default();
+        let result = hyp.ln_checked(0);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::TranscendentalError::DomainError(_))));
+    }
+
+    #[test]
+    fn test_ln_checked_negative() {
+        let hyp = HyperbolicCordic::default();
+        let result = hyp.ln_checked(-1);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::TranscendentalError::DomainError(_))));
+    }
+
+    #[test]
+    fn test_ln_checked_e() {
+        let hyp = HyperbolicCordic::default();
+        let e_scaled = to_scaled(std::f64::consts::E);
+        let result = hyp.ln_checked(e_scaled);
+        assert!(result.is_ok());
+        assert!((from_scaled(result.unwrap()) - 1.0).abs() < 0.1);
     }
 }

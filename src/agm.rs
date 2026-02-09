@@ -207,6 +207,41 @@ impl AgmEngine {
         ln_s + m_contribution
     }
     
+    /// Checked natural logarithm: returns `DomainError` for x = 0 instead of sentinel.
+    pub fn ln_checked(&self, x: u128) -> crate::TransResult<i128> {
+        if x == 0 {
+            return Err(crate::TranscendentalError::DomainError("ln: argument must be positive"));
+        }
+        Ok(self.ln(x))
+    }
+
+    /// Checked exp: returns `Overflow` instead of `u128::MAX` sentinel.
+    pub fn exp_checked(&self, x: i128) -> crate::TransResult<u128> {
+        if x == 0 { return Ok(AGM_SCALE); }
+
+        let n = 16u32;
+        let x_over_2n = x / (1i128 << n);
+
+        let base = AGM_SCALE as i128 + x_over_2n;
+        if base <= 0 { return Ok(0); }
+
+        let mut result = base as u128;
+
+        for _ in 0..n {
+            let sq = result;
+            if sq > (u128::MAX / sq.max(1)) {
+                return Err(crate::TranscendentalError::Overflow("exp: intermediate square overflow"));
+            }
+            let product = sq * sq;
+            result = product / AGM_SCALE;
+            if result > (u128::MAX / AGM_SCALE) {
+                return Err(crate::TranscendentalError::Overflow("exp: result exceeds u128 range"));
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Compute π using the Gauss-Legendre (AGM) algorithm
     /// This is the Brent-Salamin algorithm:
     ///   a₀ = 1, b₀ = 1/√2
@@ -681,5 +716,60 @@ mod tests {
         let engine = AgmEngine::default();
         let result = engine.ln(0);
         assert_eq!(result, i128::MIN, "ln(0) should return i128::MIN sentinel");
+    }
+
+    // ================================================================
+    // TDD: Result-based checked API
+    // ================================================================
+
+    #[test]
+    fn test_ln_checked_one() {
+        let engine = AgmEngine::default();
+        let result = engine.ln_checked(AGM_SCALE);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // ln(1) = 0
+    }
+
+    #[test]
+    fn test_ln_checked_zero() {
+        let engine = AgmEngine::default();
+        let result = engine.ln_checked(0);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::TranscendentalError::DomainError(_))));
+    }
+
+    #[test]
+    fn test_ln_checked_positive() {
+        let engine = AgmEngine::default();
+        let result = engine.ln_checked(2 * AGM_SCALE); // ln(2)
+        assert!(result.is_ok());
+        let val = result.unwrap() as f64 / AGM_SCALE as f64;
+        assert!((val - std::f64::consts::LN_2).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_exp_checked_zero() {
+        let engine = AgmEngine::default();
+        let result = engine.exp_checked(0);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), AGM_SCALE); // exp(0) = 1
+    }
+
+    #[test]
+    fn test_exp_checked_overflow() {
+        let engine = AgmEngine::default();
+        // Very large input should overflow
+        let result = engine.exp_checked(i128::MAX / 2);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(crate::TranscendentalError::Overflow(_))));
+    }
+
+    #[test]
+    fn test_exp_checked_one() {
+        let engine = AgmEngine::default();
+        let result = engine.exp_checked(AGM_SCALE as i128); // exp(1)
+        assert!(result.is_ok());
+        let val = from_scaled(result.unwrap());
+        assert!((val - std::f64::consts::E).abs() < 0.1);
     }
 }
