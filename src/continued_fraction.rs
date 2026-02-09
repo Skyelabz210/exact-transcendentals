@@ -313,7 +313,7 @@ pub fn pell_fundamental(n: u64) -> Option<(i128, i128)> {
     // For Pell equation, solution is at convergent p_{r-1}/q_{r-1}
     // where r is the period length
     // If r is odd, use p_{2r-1}/q_{2r-1}
-    let conv_idx = if period_len % 2 == 0 {
+    let conv_idx = if period_len.is_multiple_of(2) {
         period_len - 1
     } else {
         2 * period_len - 1

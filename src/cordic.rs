@@ -141,9 +141,20 @@ impl CordicEngine {
         let (gain, inv_gain) = if iterations >= CORDIC_ITERATIONS {
             (CORDIC_GAIN_30, CORDIC_INV_GAIN_30)
         } else {
-            // Compute for fewer iterations (less accurate but faster)
-            // This is approximate - in production, precompute these
-            (CORDIC_GAIN_30, CORDIC_INV_GAIN_30)
+            // Compute gain for fewer iterations using integer sqrt.
+            // K_n = ∏_{i=0}^{n-1} √(1 + 2^{-2i})
+            // We compute K_n × 2^30 incrementally.
+            let mut k_sq = SCALE as i128 * SCALE as i128; // (2^30)^2
+            for i in 0..iterations {
+                // k_sq *= (1 + 2^{-2i}) = multiply by (2^{2i} + 1) / 2^{2i}
+                let shift = 2 * i as u32;
+                k_sq = k_sq * ((1i128 << shift) + 1) / (1i128 << shift);
+            }
+            // k = isqrt(k_sq) = K × 2^30
+            let k = crate::sqrt::isqrt_newton(k_sq as u64) as i64;
+            // inv_k = 2^60 / k  (since gain × inv_gain = SCALE²)
+            let inv_k = ((SCALE as i128 * SCALE as i128) / k as i128) as i64;
+            (k, inv_k)
         };
         
         Self { iterations, gain, inv_gain }
@@ -289,25 +300,30 @@ impl CordicEngine {
     /// Uses vectoring mode - the x result after convergence is the magnitude × K
     #[inline]
     pub fn magnitude(&self, x: i64, y: i64) -> i64 {
+        // Vectoring mode: rotate (x,y) so that y→0, then xv = magnitude × K.
+        // We place both components in the first quadrant (xv≥0) and let
+        // the sign of yv drive the rotation direction at each step.
         let mut xv = x.abs();
         let mut yv = y.abs();
-        
-        // Vectoring mode drives y to 0, x becomes magnitude
+
         for i in 0..self.iterations.min(CORDIC_ITERATIONS) {
-            let d = if yv < 0 { 1i64 } else { -1i64 };
-            
+            // d = sign decision: rotate to drive yv toward zero
             let x_shift = xv >> i;
             let y_shift = yv >> i;
-            
-            let new_x = xv - d * y_shift;
-            let new_y = yv + d * x_shift;
-            
-            xv = new_x;
-            yv = new_y;
+
+            if yv > 0 {
+                // yv positive → rotate clockwise (subtract from y)
+                xv += y_shift;
+                yv -= x_shift;
+            } else {
+                // yv negative → rotate counter-clockwise (add to y)
+                xv -= y_shift;
+                yv += x_shift;
+            }
         }
-        
-        // Result is x × K, so multiply by gain to get actual magnitude
-        (xv as i128 * self.gain as i128 / SCALE as i128) as i64
+
+        // Result is xv × gain to compensate for CORDIC scaling
+        ((xv as i128 * self.gain as i128 / SCALE as i128) as i64).abs()
     }
 }
 
@@ -391,10 +407,21 @@ impl HyperbolicCordic {
         if arg == 0 {
             return (SCALE, 0);
         }
-        
-        // Hyperbolic CORDIC converges for |arg| ≤ 1.1182 (sum of atanh table)
-        // For larger arguments, use identities
-        
+
+        // Hyperbolic CORDIC converges for |arg| ≤ 1.1182 (sum of atanh table).
+        // For larger arguments, halve recursively: sinh(2x) = 2*sinh(x)*cosh(x),
+        // cosh(2x) = 2*cosh²(x) - 1.
+        let convergence_limit = SCALE + (SCALE >> 3); // ~1.125 * SCALE
+        if arg.abs() > convergence_limit {
+            let half_arg = arg / 2;
+            let (c, s) = self.sinhcosh(half_arg);
+            // Double-angle: cosh(2x) = 2*cosh²(x) - 1, sinh(2x) = 2*sinh(x)*cosh(x)
+            let cosh_2x = (2i64.saturating_mul((c as i128 * c as i128 / SCALE as i128) as i64))
+                .saturating_sub(SCALE);
+            let sinh_2x = 2i64.saturating_mul((s as i128 * c as i128 / SCALE as i128) as i64);
+            return (cosh_2x, sinh_2x);
+        }
+
         let mut x = SCALE; // Start at (1, 0)
         let mut y = 0i64;
         let mut z = arg;
@@ -428,9 +455,9 @@ impl HyperbolicCordic {
                 let d = if z >= 0 { 1i64 } else { -1i64 };
                 let x_shift = x >> i;
                 let y_shift = y >> i;
-                x = x + d * y_shift;
-                y = y + d * x_shift;
-                z = z - d * CORDIC_ATANH_TABLE[idx];
+                x += d * y_shift;
+                y += d * x_shift;
+                z -= d * CORDIC_ATANH_TABLE[idx];
                 repeat_at = 3 * repeat_at + 1;
             }
             
@@ -508,9 +535,9 @@ impl HyperbolicCordic {
                 let d = if yv >= 0 { -1i64 } else { 1i64 };
                 let x_shift = xv >> i;
                 let y_shift = yv >> i;
-                xv = xv + d * y_shift;
-                yv = yv + d * x_shift;
-                z = z - d * CORDIC_ATANH_TABLE[idx];
+                xv += d * y_shift;
+                yv += d * x_shift;
+                z -= d * CORDIC_ATANH_TABLE[idx];
                 repeat_at = 3 * repeat_at + 1;
             }
             
@@ -557,8 +584,8 @@ impl HyperbolicCordic {
             
             let d = if yv >= 0 { 1i64 } else { -1i64 };
             
-            xv = xv + d * y_shift;
-            yv = yv + d * x_shift;
+            xv += d * y_shift;
+            yv += d * x_shift;
             
             i += 1;
         }

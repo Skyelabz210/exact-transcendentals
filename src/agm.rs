@@ -64,7 +64,7 @@ impl AgmEngine {
         for _ in 0..self.max_iterations {
             // Check convergence
             if a == b { break; }
-            let diff = if a > b { a - b } else { b - a };
+            let diff = a.abs_diff(b);
             if diff <= 1 { break; }
             
             // a_{n+1} = (a_n + b_n) / 2
@@ -79,7 +79,7 @@ impl AgmEngine {
             // Overflow safety: for a,b ≤ AGM_SCALE = 2^62, product ≤ 2^124
             // which fits in u128. For larger values, we split the computation
             // to avoid silent saturation (which would corrupt the result).
-            let b_next = match (a as u128).checked_mul(b as u128) {
+            let b_next = match a.checked_mul(b) {
                 Some(product) => isqrt_newton_128(product),
                 None => {
                     // Overflow: use sqrt(a*b) = sqrt(a/2 * b) * sqrt(2)
@@ -90,7 +90,7 @@ impl AgmEngine {
                     let sqrt_half = isqrt_newton_128(product_safe);
                     // Multiply by sqrt(2) ≈ 1.41421... using integer approximation
                     // sqrt(2) × 2^32 = 6074001000 (precomputed)
-                    (sqrt_half as u128 * 6_074_001_000u128) >> 32
+                    (sqrt_half * 6_074_001_000u128) >> 32
                 }
             };
             
@@ -163,7 +163,7 @@ impl AgmEngine {
         
         // b_small × SCALE = 2^44 × 2^62 = 2^106, fits in u128
         let b_full = if s > 0 {
-            (b_small as u128).checked_mul(AGM_SCALE).unwrap_or(u128::MAX) / s
+            b_small.saturating_mul(AGM_SCALE) / s
         } else {
             return i128::MIN;
         };
@@ -184,12 +184,12 @@ impl AgmEngine {
         // Overflow check: π_scaled × SCALE ≈ 3.14 × 2^124 ≈ 2^125.65, fits u128.
         let pi_scaled = self.compute_pi_scaled();
         
-        let pi_term = match (pi_scaled as u128).checked_mul(AGM_SCALE) {
+        let pi_term = match pi_scaled.checked_mul(AGM_SCALE) {
             Some(v) => v / (2 * agm_val),
             None => {
                 // Fallback: split to avoid overflow
                 // π_scaled × SCALE / (2 × agm_val) = (π_scaled / 2) × SCALE / agm_val
-                ((pi_scaled as u128) / 2) * AGM_SCALE / agm_val
+                (pi_scaled / 2) * AGM_SCALE / agm_val
             }
         };
         
@@ -231,7 +231,7 @@ impl AgmEngine {
         
         for _ in 0..self.max_iterations {
             // Check convergence
-            let diff = if a > b { a - b } else { b - a };
+            let diff = a.abs_diff(b);
             if diff <= 1 { break; }
             
             // Save old a
@@ -252,7 +252,7 @@ impl AgmEngine {
             // We want to subtract p × (actual diff)² × SCALE from t
             // So: diff² / SCALE gives (actual diff)² × SCALE, then multiply by p
             let a_diff = a_old - a;  // This is already the correct diff
-            let diff_sq = (a_diff as u128).saturating_mul(a_diff as u128) / AGM_SCALE;
+            let diff_sq = a_diff.saturating_mul(a_diff) / AGM_SCALE;
             t = t.saturating_sub(p.saturating_mul(diff_sq));
             
             // p = 2p
@@ -311,7 +311,7 @@ impl AgmEngine {
             // result² = result * result
             // We compute: quotient = result² / SCALE, remainder = result² % SCALE
             // The remainder contributes to error that we can partially compensate.
-            let sq = result as u128;
+            let sq = result;
             
             // Check overflow before multiply
             if sq > (u128::MAX / sq.max(1)) {
@@ -664,5 +664,22 @@ mod tests {
         let error = (actual - std::f64::consts::LN_2).abs();
         println!("ln(2) = {:.10} (error: {:.2e})", actual, error);
         assert!(error < 0.01, "ln(2) error too large: {:.2e}", error);
+    }
+
+    #[test]
+    fn test_lemniscate_constant() {
+        let result = super::lemniscate_constant_scaled();
+        assert!(result > 0, "lemniscate constant should be positive");
+        let approx = result as f64 / AGM_SCALE as f64;
+        // The function computes π / (2 * AGM(1, √2)) ≈ 1.311
+        println!("lemniscate_constant_scaled / SCALE = {}", approx);
+        assert!(approx > 1.0 && approx < 2.0, "lemniscate constant out of range: {}", approx);
+    }
+
+    #[test]
+    fn test_ln_zero_returns_sentinel() {
+        let engine = AgmEngine::default();
+        let result = engine.ln(0);
+        assert_eq!(result, i128::MIN, "ln(0) should return i128::MIN sentinel");
     }
 }

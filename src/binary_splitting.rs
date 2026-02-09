@@ -83,6 +83,9 @@ impl BinarySplitState {
 
 /// Generic binary splitting for series:
 /// S = Σ_{k=a}^{b-1} [a(k)/b(k)] × [p(0)×...×p(k)] / [q(0)×...×q(k)]
+///
+/// Returns `None` if intermediate products overflow `i128`.
+/// For overflow-free computation, use `big_binary_split` (requires `arbitrary-precision` feature).
 pub fn binary_split<F, G, H, I>(
     a: u32,
     b: u32,
@@ -90,7 +93,7 @@ pub fn binary_split<F, G, H, I>(
     term_b: G,
     term_p: H,
     term_q: I,
-) -> BinarySplitState
+) -> Option<BinarySplitState>
 where
     F: Fn(u32) -> i128 + Copy,
     G: Fn(u32) -> i128 + Copy,
@@ -98,31 +101,24 @@ where
     I: Fn(u32) -> i128 + Copy,
 {
     if b <= a {
-        return BinarySplitState::new(1, 1, 1, 0);
+        return Some(BinarySplitState::new(1, 1, 1, 0));
     }
-    
+
     if b - a == 1 {
-        // Base case: single term
         let k = a;
         let a_k = term_a(k);
         let b_k = term_b(k);
         let p_k = if k == 0 { 1 } else { term_p(k) };
         let q_k = if k == 0 { 1 } else { term_q(k) };
-        
-        return BinarySplitState::new(p_k, q_k, b_k, a_k);
+
+        return Some(BinarySplitState::new(p_k, q_k, b_k, a_k));
     }
-    
-    // Recursive case: split in half
+
     let m = (a + b) / 2;
-    let left = binary_split(a, m, term_a, term_b, term_p, term_q);
-    let right = binary_split(m, b, term_a, term_b, term_p, term_q);
-    
-    // Use checked combine. If overflow detected, fall back to saturating
-    // (preserves backward compatibility but the caller should know precision
-    // may be degraded — this is where CRTBigInt/U256 integration is needed).
-    #[allow(deprecated)]
+    let left = binary_split(a, m, term_a, term_b, term_p, term_q)?;
+    let right = binary_split(m, b, term_a, term_b, term_p, term_q)?;
+
     BinarySplitState::combine(&left, &right)
-        .unwrap_or_else(|| BinarySplitState::combine_saturating(&left, &right))
 }
 
 // ─── Arbitrary-precision binary splitting (feature-gated) ───────────────────
@@ -388,14 +384,10 @@ pub fn ln2_binary_split(scale_bits: u32, num_terms: u32) -> i128 {
 /// Each term gives ~14.18 digits! For n bits, need n/47 terms.
 ///
 /// **KNOWN LIMITATION**: The i128 arithmetic overflows for precision_bits > ~90.
-/// For higher precision, this function requires CRTBigInt/U256 backing.
-/// See the `crtbigint` feature gate below for the integration path.
+/// For higher precision, use `pi_chudnovsky_big()` (requires `arbitrary-precision` feature).
 ///
 /// # Overflow behavior
 /// Returns 0 if intermediate computations overflow i128 range.
-/// The `binary_split` combine step uses checked arithmetic and will
-/// return degraded results rather than silently wrapping.
-#[cfg(not(feature = "crtbigint"))]
 pub fn pi_chudnovsky(precision_bits: u32) -> i128 {
     // Warn at compile time if someone asks for precision we can't deliver
     if precision_bits > 90 {
@@ -405,7 +397,7 @@ pub fn pi_chudnovsky(precision_bits: u32) -> i128 {
         return 0;
     }
     
-    let num_terms = (precision_bits / 47 + 2) as u32;
+    let num_terms = precision_bits / 47 + 2;
     let scale_bits = precision_bits + 10; // Extra precision for intermediate
     let scale = 1i128 << scale_bits.min(100);
     
@@ -417,28 +409,31 @@ pub fn pi_chudnovsky(precision_bits: u32) -> i128 {
     // This is more complex due to the (6k)! / ((3k)! × k!³) factor
     
     // Simplified: a(k) = (545140134k + 13591409), p(k) = -(6k-5)(2k-1)(6k-1), q(k) = k³ × c³/24
-    let state = binary_split(
+    let state = match binary_split(
         0,
         num_terms,
         |k| 545140134 * k as i128 + 13591409,
         |_| 1i128,
         |k| {
-            if k == 0 { 
-                1i128 
+            if k == 0 {
+                1i128
             } else {
                 let k6 = 6 * k as i128;
                 -(k6 - 5) * (2 * k as i128 - 1) * (k6 - 1)
             }
         },
         |k| {
-            if k == 0 { 
-                1i128 
-            } else { 
-                (k as i128).pow(3) * c3_over_24 
+            if k == 0 {
+                1i128
+            } else {
+                (k as i128).pow(3) * c3_over_24
             }
         },
-    );
-    
+    ) {
+        Some(s) => s,
+        None => return 0, // Overflow — use pi_chudnovsky_big() instead
+    };
+
     if state.t == 0 { return 0; }
     
     // π = C × Q / (12 × T × √640320)
@@ -469,7 +464,7 @@ pub fn pi_chudnovsky(precision_bits: u32) -> i128 {
 pub fn pi_chudnovsky_big(precision_bits: u32) -> crate::bigint::HCVLangBigInt {
     use crate::bigint::HCVLangBigInt;
 
-    let num_terms = (precision_bits / 47 + 2) as u32;
+    let num_terms = precision_bits / 47 + 2;
 
     let c3_over_24: i128 = {
         let c: i128 = 640320;

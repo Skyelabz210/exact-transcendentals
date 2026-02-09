@@ -23,13 +23,13 @@ impl CRTRational {
     /// Create a new rational from big-integer numerator and denominator.
     /// Panics if denominator is zero.
     pub fn new(num: HCVLangBigInt, den: HCVLangBigInt) -> Self {
-        debug_assert!(!den.is_zero(), "Denominator cannot be zero");
+        assert!(!den.is_zero(), "Denominator cannot be zero");
         Self { num, den }
     }
 
     /// Create from i128 values (convenience constructor).
     pub fn from_i128(num: i128, den: i128) -> Self {
-        debug_assert!(den != 0, "Denominator cannot be zero");
+        assert!(den != 0, "Denominator cannot be zero");
         Self {
             num: HCVLangBigInt::from(num),
             den: HCVLangBigInt::from(den),
@@ -112,7 +112,7 @@ impl CRTRational {
     /// Division: (a/b) / (c/d) = (a*d) / (b*c)
     /// Panics if other is zero.
     pub fn div(&self, other: &Self) -> Self {
-        debug_assert!(!other.num.is_zero(), "Division by zero");
+        assert!(!other.num.is_zero(), "Division by zero");
         let num = self.num.clone() * other.den.clone();
         let den = self.den.clone() * other.num.clone();
         Self { num, den }.reduce()

@@ -15,12 +15,8 @@ repository = "https://hackfate.us"
 [features]
 default = ["std"]
 std = []
-# Enable SIMD optimizations for CORDIC
-simd = []
-# Enable arbitrary precision via CRTBigInt integration
+# Enable arbitrary precision via CRTBigInt + HCVLangBigInt integration
 arbitrary-precision = []
-# Enable CRTBigInt-backed Chudnovsky π (eliminates i128 overflow limit)
-crtbigint = []
 
 [dependencies]
 

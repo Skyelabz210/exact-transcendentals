@@ -38,7 +38,7 @@ pub fn isqrt_newton(n: u64) -> u64 {
     } else {
         // sqrt(n) ≈ 2^(ceil(log2(n)/2))
         let log2 = 63 - n.leading_zeros();
-        let shift = (log2 + 1) / 2;
+        let shift = log2.div_ceil(2);
         // Start slightly high
         (1u64 << shift).max(n >> shift)
     };
@@ -71,7 +71,7 @@ pub fn isqrt_newton_128(n: u128) -> u128 {
         n
     } else {
         let log2 = 127 - n.leading_zeros();
-        let shift = (log2 + 1) / 2;
+        let shift = log2.div_ceil(2);
         (1u128 << shift).max(n >> shift)
     };
     
@@ -129,7 +129,7 @@ pub fn isqrt_binary(n: u64) -> u64 {
     let mut high = n.min(1u64 << 32); // sqrt(u64::MAX) < 2^32
     
     while low < high {
-        let mid = low + (high - low + 1) / 2;
+        let mid = low + (high - low).div_ceil(2);
         if mid <= n / mid {
             low = mid;
         } else {
@@ -247,7 +247,7 @@ pub fn fast_inv_sqrt(n: u64) -> u64 {
         
         if ny2_scaled >= three_scale {
             // y is too large, reduce
-            y = y / 2;
+            y /= 2;
             continue;
         }
         
@@ -299,28 +299,38 @@ pub fn icbrt(n: u64) -> u64 {
     x
 }
 
-/// Arbitrary precision sqrt using CRT (interface stub)
-/// Would integrate with CRTBigInt for massive precision
-pub mod arbitrary_precision {
-    /// Placeholder for CRTBigInt integration
-    /// In full implementation, this would use RNS representation
-    pub struct BigSqrt {
-        /// Precision in bits
-        pub precision: u32,
+/// Arbitrary-precision integer sqrt using HCVLangBigInt.
+///
+/// Uses Newton-Raphson iteration with exact integer arithmetic.
+#[cfg(feature = "arbitrary-precision")]
+pub fn big_isqrt(n: &crate::bigint::HCVLangBigInt) -> crate::bigint::HCVLangBigInt {
+    use crate::bigint::HCVLangBigInt;
+
+    if n.is_zero() || n.is_negative() {
+        return HCVLangBigInt::from(0i64);
     }
-    
-    impl BigSqrt {
-        pub fn new(precision: u32) -> Self {
-            Self { precision }
+
+    // Initial guess: n >> (bit_length / 2)
+    // For simplicity, start with n itself and converge down
+    let one = HCVLangBigInt::from(1i64);
+    let two = HCVLangBigInt::from(2i64);
+    let mut x = n.clone();
+
+    loop {
+        // x_next = (x + n/x) / 2
+        let x_next = (x.clone() + n.clone() / x.clone()) / two.clone();
+        if x_next >= x {
+            break;
         }
-        
-        /// Compute sqrt to arbitrary precision
-        /// Would use Newton-Raphson with K-Elimination division
-        pub fn sqrt(&self, _n: &[u64]) -> &'static [u64] {
-            // Stub - integrate with CRTBigInt
-            &[]
-        }
+        x = x_next;
     }
+
+    // Final correction: ensure x*x <= n < (x+1)*(x+1)
+    while x.clone() * x.clone() > *n {
+        x = x - one.clone();
+    }
+
+    x
 }
 
 #[cfg(test)]
@@ -400,5 +410,51 @@ mod tests {
         let scale: u64 = 1 << 30;
         let expected = scale / 2;
         assert!((result as i64 - expected as i64).abs() < (scale / 100) as i64);
+    }
+
+    #[test]
+    fn test_inv_sqrt_scaled() {
+        // 1/sqrt(4) = 0.5, scaled by 2^30
+        let result = inv_sqrt_scaled(4, 30);
+        let expected = 1u128 << 29; // 0.5 * 2^30
+        assert!((result as i128 - expected as i128).abs() < 100);
+    }
+
+    #[test]
+    fn test_isqrt_newton_small_nonsquares() {
+        assert_eq!(isqrt_newton(2), 1);
+        assert_eq!(isqrt_newton(3), 1);
+        assert_eq!(isqrt_newton(5), 2);
+        assert_eq!(isqrt_newton(8), 2);
+    }
+
+    #[cfg(feature = "arbitrary-precision")]
+    #[test]
+    fn test_big_isqrt() {
+        use super::big_isqrt;
+        use crate::bigint::HCVLangBigInt;
+
+        // sqrt(0) = 0
+        let zero = HCVLangBigInt::from(0i64);
+        assert!(big_isqrt(&zero).is_zero());
+
+        // sqrt(1) = 1
+        let one = HCVLangBigInt::from(1i64);
+        assert_eq!(big_isqrt(&one), one);
+
+        // sqrt(4) = 2
+        let four = HCVLangBigInt::from(4i64);
+        let two = HCVLangBigInt::from(2i64);
+        assert_eq!(big_isqrt(&four), two);
+
+        // sqrt(100) = 10
+        let hundred = HCVLangBigInt::from(100i64);
+        let ten = HCVLangBigInt::from(10i64);
+        assert_eq!(big_isqrt(&hundred), ten);
+
+        // sqrt(2^64) = 2^32
+        let big = HCVLangBigInt::from(1i64) << 64;
+        let expected = HCVLangBigInt::from(1i64) << 32;
+        assert_eq!(big_isqrt(&big), expected);
     }
 }
